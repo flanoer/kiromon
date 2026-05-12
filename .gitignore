@@ -1,0 +1,12 @@
+# Binary
+kiromon
+
+# App bundle
+*.app/
+
+# macOS
+.DS_Store
+*.iconset/
+
+# Icon (generated)
+icon.icns

@@ -50,6 +50,11 @@ var (
 	cachedPercent float64
 	usageExpiry   time.Time
 
+	// IDE Usage 캐시 (5분 유지)
+	ideMutex      sync.Mutex
+	idePercent    float64
+	ideExpiry     time.Time
+
 	// 🌟 새롭게 추가: 토큰 메모리 캐시 (만료 시점까지 유지)
 	tokenMutex      sync.Mutex
 	cachedToken     string
@@ -271,4 +276,61 @@ func fetchUsageFromAPI() (float64, error) {
 	}
 
 	return (usage.CurrentUsage / usage.UsageLimit) * 100, nil
+}
+
+// GetIDEUsagePercentage는 Kiro IDE의 로컬 캐시 DB에서 사용량(%)을 읽어옵니다. (API 호출 없음)
+func GetIDEUsagePercentage() (float64, error) {
+	ideMutex.Lock()
+	defer ideMutex.Unlock()
+
+	if time.Now().Before(ideExpiry) {
+		return idePercent, nil
+	}
+
+	dbPath := expandPath("~/Library/Application Support/Kiro/User/globalStorage/state.vscdb")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return 0, fmt.Errorf("IDE state DB not found: %s", dbPath)
+	}
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	var raw string
+	err = db.QueryRow("SELECT value FROM ItemTable WHERE key = ?", "kiro.kiroAgent").Scan(&raw)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("kiro.kiroAgent key not found in IDE DB")
+		}
+		return 0, err
+	}
+
+	// JSON 파싱: top-level key "kiro.resourceNotifications.usageState" → usageBreakdowns[0].percentageUsed
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &top); err != nil {
+		return 0, fmt.Errorf("IDE JSON parse error: %w", err)
+	}
+	us, ok := top["kiro.resourceNotifications.usageState"]
+	if !ok {
+		return 0, fmt.Errorf("kiro.resourceNotifications.usageState not found in IDE JSON")
+	}
+	var usageState struct {
+		UsageBreakdowns []struct {
+			PercentageUsed float64 `json:"percentageUsed"`
+		} `json:"usageBreakdowns"`
+	}
+	if err := json.Unmarshal(us, &usageState); err != nil {
+		return 0, err
+	}
+	if len(usageState.UsageBreakdowns) == 0 {
+		return 0, fmt.Errorf("usageBreakdowns is empty in IDE JSON")
+	}
+
+	pct := usageState.UsageBreakdowns[0].PercentageUsed
+	idePercent = pct
+	ideExpiry = time.Now().Add(5 * time.Minute)
+	slog.Debug("IDE usage loaded", "percent", pct)
+	return pct, nil
 }

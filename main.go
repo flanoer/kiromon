@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/flanoer/kiromon/internal/session"
@@ -28,6 +29,26 @@ func main() {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+
+	// 🔒 단일 인스턴스 보장: 이미 실행 중이면 즉시 종료
+	home, _ := os.UserHomeDir()
+	lockPath := filepath.Join(home, ".kiromon.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		slog.Error("Failed to open lock file", "error", err)
+		os.Exit(1)
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		slog.Error("Another Kiromon instance is already running. Exiting.")
+		lockFile.Close()
+		os.Exit(1)
+	}
+	defer func() {
+		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		lockFile.Close()
+		os.Remove(lockPath)
+	}()
+
 	// systray.Run은 내부적으로 macOS의 메인 이벤트 루프(UI 스레드)를 점유합니다.
 	// 이 함수가 호출되면 앱이 종료될 때까지 블로킹(대기)됩니다.
 	systray.Run(onReady, nil)
@@ -55,7 +76,8 @@ func onReady() {
 	mActiveTime := systray.AddMenuItem("  Active Time: 0m", "")
 
 	// 🌟 Usage 메뉴 아이템 추가
-	mUsage := systray.AddMenuItem("💳 Usage: Loading...", "")
+	mUsage := systray.AddMenuItem("💳 CLI Usage: Loading...", "")
+	mIDEUsage := systray.AddMenuItem("💳 IDE Usage: Loading...", "")
 
 	systray.AddSeparator()
 	mThisWeek := systray.AddMenuItem("📈 This Week: 0 msgs", "")
@@ -64,6 +86,7 @@ func onReady() {
 	mMessages.Disable()
 	mActiveTime.Disable()
 	mUsage.Disable()
+	mIDEUsage.Disable()
 	mThisWeek.Disable()
 
 	systray.AddSeparator()
@@ -96,7 +119,7 @@ func onReady() {
 		defer heartbeat.Stop()
 
 		// 앱 시작 시 최초 1회 실행
-		updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage)
+		updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
 
 		for {
 			select {
@@ -115,15 +138,15 @@ func onReady() {
 			case <-debounceTimer.C:
 				// 파일 쓰기가 멈추고 0.5초가 무사히 지나면 비로소 UI를 갱신합니다. (Race Condition 확률 극도로 저하)
 				slog.Debug("File change detected -> updating UI")
-				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage)
+				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
 
 			case <-heartbeat.C:
 				slog.Debug("Heartbeat -> updating UI")
-				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage)
+				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
 
 			case <-mRefresh.ClickedCh:
 				slog.Info("Manual refresh triggered")
-				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage)
+				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
 			}
 		}
 	}()
@@ -141,7 +164,7 @@ func onExit() {
 }
 
 // updateUI는 1단계~3단계에서 만든 로직을 호출하여 메뉴바 텍스트를 갱신합니다.
-func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage *systray.MenuItem) {
+func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage *systray.MenuItem) {
 	// 🌟 1. 함수 시작과 동시에 현재 시간(now) 캡처
 	now := time.Now()
 
@@ -212,20 +235,31 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage *systray.Menu
 	activeStr := formatDuration(summary.TodayActiveTime)
 
 	// 🌟 Usage 데이터 가져오기 (Graceful Fallback)
-	usagePct, err := usage.GetUsagePercentage()
-	var usageStr string
-	if err != nil {
-		// 토큰 만료(401) 또는 파일 없음 등 에러 발생 시
-		usageStr = ""
-		mUsage.SetTitle("💳 Usage: N/A (Token expired?)")
-		slog.Error("Usage API failed", "error", err)
+	cliPct, cliErr := usage.GetUsagePercentage()
+	idePct, ideErr := usage.GetIDEUsagePercentage()
+
+	var cliStr, ideStr, usageStr string
+	if cliErr != nil {
+		cliStr = "N/A"
+		mUsage.SetTitle("💳 CLI Usage: N/A")
+		slog.Error("CLI Usage API failed", "error", cliErr)
 	} else {
-		// 정상 획득 시
-		usageStr = fmt.Sprintf(" | 💳 %.1f%%", usagePct)
-		mUsage.SetTitle(fmt.Sprintf("💳 Usage: %.1f%%", usagePct))
+		cliStr = fmt.Sprintf("%.1f%%", cliPct)
+		mUsage.SetTitle(fmt.Sprintf("💳 CLI Usage: %.1f%%", cliPct))
+	}
+	if ideErr != nil {
+		ideStr = "N/A"
+		mIDEUsage.SetTitle("💳 IDE Usage: N/A")
+		slog.Error("IDE Usage read failed", "error", ideErr)
+	} else {
+		ideStr = fmt.Sprintf("%.1f%%", idePct)
+		mIDEUsage.SetTitle(fmt.Sprintf("💳 IDE Usage: %.1f%%", idePct))
 	}
 
-	// 메뉴바 타이틀에 Usage 결합 (예: 🤖 2h 14m 42 3 | 💳 13.6%)
+	// 타이틀: 🤖 2h 14m 42 3 | 💳 CLI 9.9% IDE 9.9%
+	usageStr = fmt.Sprintf(" | 💳 CLI %s IDE %s", cliStr, ideStr)
+
+	// 메뉴바 타이틀에 Usage 결합
 	title := fmt.Sprintf("🤖 %s %d %d%s", activeStr, summary.TodayMessages, summary.TodaySessions, usageStr)
 	systray.SetTitle(title)
 

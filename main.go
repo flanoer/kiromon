@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -199,7 +200,10 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage *s
 	}
 	sessionMenuItems = nil
 
-	// 🌟 최근 세션의 프로젝트 + 브랜치 정보 표시
+	// 🌟 최근 세션의 프로젝트 + 브랜치 정보 표시 (EndTime 기준 최신순 정렬)
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].EndTime.After(sessions[j].EndTime)
+	})
 	if len(sessions) > 0 {
 		systray.AddSeparator()
 		header := systray.AddMenuItem("📂 Active Projects:", "")
@@ -208,7 +212,7 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage *s
 
 		// 프로젝트별로 중복 없이 최근 순으로 나열
 		projectMap := make(map[string]bool)
-		for i := len(sessions) - 1; i >= 0 && len(projectMap) < 3; i-- {
+		for i := 0; i < len(sessions) && len(projectMap) < 10; i++ {
 			s := sessions[i]
 			if s.Cwd == "" {
 				continue

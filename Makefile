@@ -63,9 +63,10 @@ app: build icon
 	@echo "✅  Packaging complete!"
 
 install: app
-	@echo "🚀  Installing to Applications folder..."
-	@rm -rf /Applications/$(APP_DIR)
-	@cp -r $(APP_DIR) /Applications/
+	@echo "🚀  Installing to ~/Applications..."
+	@mkdir -p ~/Applications
+	@rm -rf ~/Applications/$(APP_DIR)
+	@cp -r $(APP_DIR) ~/Applications/
 	@echo "🎉  Installed! You can now run $(APP_NAME) from Spotlight."
 
 clean:
@@ -75,5 +76,5 @@ clean:
 
 uninstall:
 	@echo "🗑️  Uninstalling $(APP_NAME)..."
-	@rm -rf /Applications/$(APP_DIR)
+	@rm -rf ~/Applications/$(APP_DIR)
 	@echo "✨  Uninstalled successfully!"

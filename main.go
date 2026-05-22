@@ -288,30 +288,21 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, m
 	cliPct, cliErr := usage.GetUsagePercentage()
 	idePct, ideErr := usage.GetIDEUsagePercentage()
 
-	var cliStr, ideStr, usageStr string
 	if cliErr != nil {
-		cliStr = "N/A"
 		mUsage.SetTitle("💳 CLI Usage: N/A")
 		slog.Error("CLI Usage API failed", "error", cliErr)
 	} else {
-		cliStr = fmt.Sprintf("%.1f%%", cliPct)
 		mUsage.SetTitle(fmt.Sprintf("💳 CLI Usage: %.1f%%", cliPct))
 	}
 	if ideErr != nil {
-		ideStr = "N/A"
 		mIDEUsage.SetTitle("💳 IDE Usage: N/A")
 		slog.Error("IDE Usage read failed", "error", ideErr)
 	} else {
-		ideStr = fmt.Sprintf("%.1f%%", idePct)
 		mIDEUsage.SetTitle(fmt.Sprintf("💳 IDE Usage: %.1f%%", idePct))
 	}
 
-	// 타이틀: 🤖 2h 14m 42 3 | 💳 CLI 9.9% IDE 9.9%
-	usageStr = fmt.Sprintf(" | 💳 CLI %s IDE %s", cliStr, ideStr)
-
-	// 메뉴바 타이틀에 Usage 결합
-	title := fmt.Sprintf("🤖 %s %d %d%s", activeStr, summary.TodayMessages, summary.TodaySessions, usageStr)
-	systray.SetTitle(title)
+	// 타이틀: forecast 기반 잔여 일수만 표시
+	// (forecast 계산은 아래에서 수행 후 타이틀 설정)
 
 	// 드롭다운 메뉴 아이템 업데이트
 	mSessions.SetTitle(fmt.Sprintf("  Sessions: %d", summary.TodaySessions))
@@ -328,14 +319,25 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, m
 	cliForecast, ideForecast := history.Forecast(records, cliPct, idePct)
 
 	if cliForecast.DaysLeft >= 0 {
-		mCLIForecast.SetTitle(fmt.Sprintf("📅 CLI: ~%d days left", cliForecast.DaysLeft))
+		mCLIForecast.SetTitle(fmt.Sprintf("📅 CLI: ~%.1f days left", cliForecast.DaysLeft))
 	} else {
 		mCLIForecast.SetTitle("📅 CLI: N/A")
 	}
 	if ideForecast.DaysLeft >= 0 {
-		mIDEForecast.SetTitle(fmt.Sprintf("📅 IDE: ~%d days left", ideForecast.DaysLeft))
+		mIDEForecast.SetTitle(fmt.Sprintf("📅 IDE: ~%.1f days left", ideForecast.DaysLeft))
 	} else {
 		mIDEForecast.SetTitle("📅 IDE: N/A")
+	}
+
+	// 메뉴바 타이틀: 잔여 일수 중 적은 쪽 표시
+	minDays := cliForecast.DaysLeft
+	if ideForecast.DaysLeft >= 0 && (minDays < 0 || ideForecast.DaysLeft < minDays) {
+		minDays = ideForecast.DaysLeft
+	}
+	if minDays >= 0 {
+		systray.SetTitle(fmt.Sprintf("🤖 ~%.1fd left", minDays))
+	} else {
+		systray.SetTitle("🤖 Kiro")
 	}
 }
 

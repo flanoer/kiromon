@@ -319,12 +319,12 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, m
 	cliForecast, ideForecast := history.Forecast(records, cliPct, idePct)
 
 	if cliForecast.DaysLeft >= 0 {
-		mCLIForecast.SetTitle(fmt.Sprintf("📅 CLI: ~%d days left", cliForecast.DaysLeft))
+		mCLIForecast.SetTitle(fmt.Sprintf("📅 CLI: ~%.1f days left", cliForecast.DaysLeft))
 	} else {
 		mCLIForecast.SetTitle("📅 CLI: N/A")
 	}
 	if ideForecast.DaysLeft >= 0 {
-		mIDEForecast.SetTitle(fmt.Sprintf("📅 IDE: ~%d days left", ideForecast.DaysLeft))
+		mIDEForecast.SetTitle(fmt.Sprintf("📅 IDE: ~%.1f days left", ideForecast.DaysLeft))
 	} else {
 		mIDEForecast.SetTitle("📅 IDE: N/A")
 	}
@@ -335,7 +335,7 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, m
 		minDays = ideForecast.DaysLeft
 	}
 	if minDays >= 0 {
-		systray.SetTitle(fmt.Sprintf("🤖 ~%dd left", minDays))
+		systray.SetTitle(fmt.Sprintf("🤖 ~%.1fd left", minDays))
 	} else {
 		systray.SetTitle("🤖 Kiro")
 	}

@@ -5,7 +5,7 @@ import (
 )
 
 type ForecastResult struct {
-	DaysLeft int
+	DaysLeft float64 // -1 means N/A (insufficient data)
 }
 
 func Forecast(records []Record, currentCLIPct, currentIDEPct float64) (ForecastResult, ForecastResult) {
@@ -25,7 +25,6 @@ func Forecast(records []Record, currentCLIPct, currentIDEPct float64) (ForecastR
 		return na, na
 	}
 
-	// 이번 달 1일부터 오늘까지 경과 일수 기반
 	days := float64(now.Day())
 
 	calc := func(pct float64) ForecastResult {
@@ -33,7 +32,7 @@ func Forecast(records []Record, currentCLIPct, currentIDEPct float64) (ForecastR
 		if avg <= 0 {
 			return ForecastResult{-1}
 		}
-		return ForecastResult{int((100 - pct) / avg)}
+		return ForecastResult{(100 - pct) / avg}
 	}
 
 	return calc(currentCLIPct), calc(currentIDEPct)

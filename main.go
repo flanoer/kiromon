@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/flanoer/kiromon/internal/history"
 	"github.com/flanoer/kiromon/internal/session"
 	"github.com/flanoer/kiromon/internal/usage"
 
@@ -50,6 +52,15 @@ func main() {
 		os.Remove(lockPath)
 	}()
 
+	// Signal handling for graceful shutdown (save history on SIGTERM/SIGINT)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigChan
+		saveHistory()
+		os.Exit(0)
+	}()
+
 	// systray.Run은 내부적으로 macOS의 메인 이벤트 루프(UI 스레드)를 점유합니다.
 	// 이 함수가 호출되면 앱이 종료될 때까지 블로킹(대기)됩니다.
 	systray.Run(onReady, nil)
@@ -82,6 +93,11 @@ func onReady() {
 
 	systray.AddSeparator()
 	mThisWeek := systray.AddMenuItem("📈 This Week: 0 msgs", "")
+
+	mCLIForecast := systray.AddMenuItem("📅 CLI: calculating...", "")
+	mIDEForecast := systray.AddMenuItem("📅 IDE: calculating...", "")
+	mCLIForecast.Disable()
+	mIDEForecast.Disable()
 
 	mSessions.Disable()
 	mMessages.Disable()
@@ -120,7 +136,8 @@ func onReady() {
 		defer heartbeat.Stop()
 
 		// 앱 시작 시 최초 1회 실행
-		updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
+		saveHistory()
+		updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, mCLIForecast, mIDEForecast)
 
 		for {
 			select {
@@ -139,15 +156,16 @@ func onReady() {
 			case <-debounceTimer.C:
 				// 파일 쓰기가 멈추고 0.5초가 무사히 지나면 비로소 UI를 갱신합니다. (Race Condition 확률 극도로 저하)
 				slog.Debug("File change detected -> updating UI")
-				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
+				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, mCLIForecast, mIDEForecast)
 
 			case <-heartbeat.C:
 				slog.Debug("Heartbeat -> updating UI")
-				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
+				saveHistory()
+				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, mCLIForecast, mIDEForecast)
 
 			case <-mRefresh.ClickedCh:
 				slog.Info("Manual refresh triggered")
-				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage)
+				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, mCLIForecast, mIDEForecast)
 			}
 		}
 	}()
@@ -155,7 +173,8 @@ func onReady() {
 	// 3. 종료 버튼 이벤트 리스너 (고루틴)
 	go func() {
 		<-mQuit.ClickedCh // Quit 버튼이 클릭될 때까지 대기
-		systray.Quit()    // 앱 정상 종료
+		saveHistory()
+		systray.Quit() // 앱 정상 종료
 	}()
 }
 
@@ -164,8 +183,34 @@ func onExit() {
 	slog.Info("Kiro Menubar stopped")
 }
 
+// saveHistory saves today's usage data to the history store.
+func saveHistory() {
+	now := time.Now()
+	summary, _, err := session.ScanSessions("~/.kiro/sessions/cli/", now)
+	if err != nil {
+		slog.Error("saveHistory: session scan failed", "error", err)
+		return
+	}
+	cliPct, _ := usage.GetUsagePercentage()
+	idePct, _ := usage.GetIDEUsagePercentage()
+
+	record := history.Record{
+		Date:           now.Format("2006-01-02"),
+		Sessions:       summary.TodaySessions,
+		Messages:       summary.TodayMessages,
+		ActiveMinutes:  int(summary.TodayActiveTime.Minutes()),
+		CLIUsagePct:    cliPct,
+		IDEUsagePct:    idePct,
+	}
+	if err := history.Upsert(record); err != nil {
+		slog.Error("saveHistory: upsert failed", "error", err)
+	} else {
+		slog.Info("saveHistory: saved", "date", record.Date)
+	}
+}
+
 // updateUI는 1단계~3단계에서 만든 로직을 호출하여 메뉴바 텍스트를 갱신합니다.
-func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage *systray.MenuItem) {
+func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, mCLIForecast, mIDEForecast *systray.MenuItem) {
 	// 🌟 1. 함수 시작과 동시에 현재 시간(now) 캡처
 	now := time.Now()
 
@@ -273,6 +318,25 @@ func updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage *s
 	mMessages.SetTitle(fmt.Sprintf("  Messages: %d", summary.TodayMessages))
 	mActiveTime.SetTitle(fmt.Sprintf("  Active Time: %s", activeStr))
 	mThisWeek.SetTitle(fmt.Sprintf("📈 This Week: %d msgs", summary.ThisWeekMessages))
+
+	// 🌟 Forecast update
+	records, err := history.Load()
+	if err != nil {
+		slog.Error("history.Load failed", "error", err)
+		return
+	}
+	cliForecast, ideForecast := history.Forecast(records, cliPct, idePct)
+
+	if cliForecast.DaysLeft >= 0 {
+		mCLIForecast.SetTitle(fmt.Sprintf("📅 CLI: ~%d days left", cliForecast.DaysLeft))
+	} else {
+		mCLIForecast.SetTitle("📅 CLI: N/A")
+	}
+	if ideForecast.DaysLeft >= 0 {
+		mIDEForecast.SetTitle(fmt.Sprintf("📅 IDE: ~%d days left", ideForecast.DaysLeft))
+	} else {
+		mIDEForecast.SetTitle("📅 IDE: N/A")
+	}
 }
 
 // formatDuration은 time.Duration을 UI 요구사항에 맞게 예쁘게 변환합니다.

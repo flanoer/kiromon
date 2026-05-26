@@ -165,6 +165,7 @@ func onReady() {
 
 			case <-mRefresh.ClickedCh:
 				slog.Info("Manual refresh triggered")
+				usage.InvalidateAll()
 				updateUI(mSessions, mMessages, mActiveTime, mThisWeek, mUsage, mIDEUsage, mCLIForecast, mIDEForecast)
 			}
 		}

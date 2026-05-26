@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite 드라이버
@@ -46,19 +47,27 @@ type APIResponse struct {
 
 var (
 	// Usage API 결과 캐시 (5분 유지)
-	usageMutex    sync.Mutex
-	cachedPercent float64
-	usageExpiry   time.Time
+	usageMutex           sync.Mutex
+	cachedPercent        float64
+	usageExpiry          time.Time
+	usageCachedAtVersion uint64 // accountVersion at cache time (protected by usageMutex)
 
 	// IDE Usage 캐시 (5분 유지)
-	ideMutex      sync.Mutex
-	idePercent    float64
-	ideExpiry     time.Time
+	ideMutex           sync.Mutex
+	idePercent         float64
+	ideExpiry          time.Time
+	ideCachedAtVersion uint64 // accountVersion at cache time (protected by ideMutex)
 
 	// 🌟 새롭게 추가: 토큰 메모리 캐시 (만료 시점까지 유지)
 	tokenMutex      sync.Mutex
 	cachedToken     string
 	tokenExpiryTime time.Time
+
+	// 🌟 계정 전환 감지용 버전 카운터.
+	// getValidAccessToken()이 DB 토큰과 cachedToken이 다른 것을 감지하면 +1,
+	// InvalidateAll()이 호출돼도 +1. CLI/IDE Usage 캐시는 본인이 캐시했던
+	// 시점의 버전과 현재 버전을 비교해 불일치 시 stale로 판정한다.
+	accountVersion atomic.Uint64
 )
 
 func expandPath(p string) string {
@@ -134,16 +143,8 @@ func refreshOIDCToken(tokenData TokenData, clientData ClientData) (string, int, 
 }
 
 func getValidAccessToken() (string, error) {
-	// 1. 메모리 캐시 확인 (만료 1분 전까지 안전하게 사용)
-	tokenMutex.Lock()
-	if cachedToken != "" && time.Now().Add(1*time.Minute).Before(tokenExpiryTime) {
-		token := cachedToken
-		tokenMutex.Unlock()
-		return token, nil
-	}
-	tokenMutex.Unlock()
-
-	// (캐시가 없거나 만료되었다면 SQLite DB 접근 시작)
+	// 🌟 계정 전환 감지를 위해 항상 DB 토큰을 먼저 읽는다.
+	// (로컬 SQLite 읽기는 ms 단위라 비용이 거의 없다.)
 	dbPath := expandPath("~/Library/Application Support/kiro-cli/data.sqlite3")
 
 	tokenVal, err := getDBValue(dbPath, "kirocli:odic:token")
@@ -155,6 +156,23 @@ func getValidAccessToken() (string, error) {
 	if err := json.Unmarshal([]byte(tokenVal), &t); err != nil {
 		return "", err
 	}
+
+	// 1. 메모리 캐시 + 계정 전환 감지
+	tokenMutex.Lock()
+	if cachedToken != "" && cachedToken != t.AccessToken {
+		// DB의 access token이 메모리 캐시와 다르면 다른 계정으로 로그인했거나
+		// kiro-cli가 토큰을 갱신한 상황. 어느 쪽이든 모든 캐시를 무효화한다.
+		slog.Info("Account/token switch detected; invalidating caches")
+		cachedToken = ""
+		tokenExpiryTime = time.Time{}
+		accountVersion.Add(1)
+	}
+	if cachedToken != "" && time.Now().Add(1*time.Minute).Before(tokenExpiryTime) {
+		token := cachedToken
+		tokenMutex.Unlock()
+		return token, nil
+	}
+	tokenMutex.Unlock()
 
 	// 2. DB에서 읽어온 토큰의 만료 시간 확인
 	expiresAt, err := time.Parse(time.RFC3339, t.ExpiresAt)
@@ -193,11 +211,26 @@ func getValidAccessToken() (string, error) {
 	return newToken, nil
 }
 
+// InvalidateAll forces all in-memory caches (access token, CLI usage %, IDE usage %)
+// to be re-fetched on the next call. Use this for the manual Refresh action and as a
+// safety net when account switching isn't auto-detected (e.g. IDE-only switch).
+func InvalidateAll() {
+	tokenMutex.Lock()
+	cachedToken = ""
+	tokenExpiryTime = time.Time{}
+	tokenMutex.Unlock()
+
+	accountVersion.Add(1)
+	slog.Info("usage: all caches invalidated by InvalidateAll")
+}
+
 func GetUsagePercentage() (float64, error) {
 	usageMutex.Lock()         // 🌟 변수명 수정
 	defer usageMutex.Unlock() // 🌟 변수명 수정
 
-	if time.Now().Before(usageExpiry) { // 🌟 변수명 수정
+	// 🌟 계정 전환이 감지되면 (accountVersion 변동) 만료 시간과 무관하게 재조회한다.
+	currentVersion := accountVersion.Load()
+	if usageCachedAtVersion == currentVersion && time.Now().Before(usageExpiry) {
 		return cachedPercent, nil
 	}
 
@@ -211,6 +244,9 @@ func GetUsagePercentage() (float64, error) {
 
 	cachedPercent = percent
 	usageExpiry = time.Now().Add(5 * time.Minute) // 🌟 변수명 수정
+	// fetchUsageFromAPI 내부에서 계정 전환이 감지돼 accountVersion이 다시
+	// bump됐을 수 있으므로 fetch 직후 값을 다시 읽어 캐시 버전으로 기록한다.
+	usageCachedAtVersion = accountVersion.Load()
 
 	return percent, nil
 }
@@ -283,7 +319,9 @@ func GetIDEUsagePercentage() (float64, error) {
 	ideMutex.Lock()
 	defer ideMutex.Unlock()
 
-	if time.Now().Before(ideExpiry) {
+	// 🌟 계정 전환이 감지되면 만료 시간과 무관하게 재조회한다.
+	currentVersion := accountVersion.Load()
+	if ideCachedAtVersion == currentVersion && time.Now().Before(ideExpiry) {
 		return idePercent, nil
 	}
 
@@ -331,6 +369,7 @@ func GetIDEUsagePercentage() (float64, error) {
 	pct := usageState.UsageBreakdowns[0].PercentageUsed
 	idePercent = pct
 	ideExpiry = time.Now().Add(5 * time.Minute)
+	ideCachedAtVersion = accountVersion.Load()
 	slog.Debug("IDE usage loaded", "percent", pct)
 	return pct, nil
 }

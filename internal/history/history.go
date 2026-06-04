@@ -11,12 +11,12 @@ import (
 )
 
 type Record struct {
-	Date          string
-	Sessions      int
-	Messages      int
-	ActiveMinutes int
-	CLIUsagePct   float64
-	IDEUsagePct   float64
+	Date          string  `json:"date"`
+	Sessions      int     `json:"sessions"`
+	Messages      int     `json:"messages"`
+	ActiveMinutes int     `json:"active_minutes"`
+	CLIUsagePct   float64 `json:"cli_usage_pct"`
+	IDEUsagePct   float64 `json:"ide_usage_pct"`
 }
 
 const csvPath = "~/.kiromon/history.csv"

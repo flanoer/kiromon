@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -25,13 +26,30 @@ const (
 var (
 	dashboardMu  sync.Mutex
 	dashboardCmd *exec.Cmd
+
+	// 🌟 Double-spawn guard. Set while a goroutine is in the middle of
+	// spawn-and-wait so a rapid second click is ignored. Without this, two
+	// concurrent invocations could both miss the port file and both spawn a
+	// child — harmless on a fixed port (second EADDRINUSE-fails) but on a
+	// random port both would bind successfully and one becomes orphaned.
+	launching atomic.Bool
 )
 
 // openDashboard implements the menubar "Open Dashboard" click:
 //   1. If the port file exists and the server responds, just open the browser.
 //   2. Otherwise spawn kiromon-dashboard (--no-browser), poll for readiness,
 //      then open the browser.
+//
+// Concurrent invocations (rapid double-click) are coalesced via the
+// `launching` atomic flag — only the first goroutine spawns; subsequent ones
+// return immediately.
 func openDashboard() {
+	if !launching.CompareAndSwap(false, true) {
+		slog.Debug("Open Dashboard already in progress; ignoring click")
+		return
+	}
+	defer launching.Store(false)
+
 	if port, ok := readDashboardPort(); ok && pingDashboard(port) {
 		openURLInBrowser(fmt.Sprintf("http://127.0.0.1:%d/", port))
 		slog.Info("Dashboard already running; opened browser", "port", port)

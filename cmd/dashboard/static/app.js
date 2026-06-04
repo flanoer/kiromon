@@ -126,10 +126,10 @@
     /* ---------- Renderers ---------- */
 
     function renderActivityChart(records) {
-        const labels = records.map(r => r.Date);
-        const messages = records.map(r => r.Messages);
-        const sessions = records.map(r => r.Sessions);
-        const active = records.map(r => r.ActiveMinutes);
+        const labels = records.map(r => r.date);
+        const messages = records.map(r => r.messages);
+        const sessions = records.map(r => r.sessions);
+        const active = records.map(r => r.active_minutes);
 
         const ctx = $("#activity-chart").getContext("2d");
         const fg = getComputedStyle(document.documentElement).getPropertyValue("--fg").trim();

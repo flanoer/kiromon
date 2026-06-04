@@ -4,15 +4,20 @@ CONTENTS_DIR = $(APP_DIR)/Contents
 MACOS_DIR = $(CONTENTS_DIR)/MacOS
 RESOURCES_DIR = $(CONTENTS_DIR)/Resources
 BINARY_NAME = kiromon
+DASHBOARD_BINARY = kiromon-dashboard
 ICON_NAME = icon
 
-.PHONY: all clean build app install icon uninstall
+.PHONY: all clean build dashboard app install icon uninstall run-dashboard
 
-all: clean build app
+all: clean build dashboard app
 
 build:
-	@echo "🛠️  Building Go binary..."
+	@echo "🛠️  Building Go binary (menubar)..."
 	go build -o $(BINARY_NAME) .
+
+dashboard:
+	@echo "🛠️  Building Go binary (dashboard)..."
+	go build -o $(DASHBOARD_BINARY) ./cmd/dashboard
 
 # 🌟 새로운 아이콘 생성 로직
 icon:
@@ -35,11 +40,12 @@ icon:
 		echo "⚠️  icon.png not found. Skipping icon generation."; \
 	fi
 
-app: build icon
+app: build dashboard icon
 	@echo "📦  Packaging $(APP_DIR)..."
 	@mkdir -p $(MACOS_DIR)
 	@mkdir -p $(RESOURCES_DIR)
 	@cp $(BINARY_NAME) $(MACOS_DIR)/$(APP_NAME)
+	@cp $(DASHBOARD_BINARY) $(MACOS_DIR)/$(DASHBOARD_BINARY)
 	@if [ -f $(ICON_NAME).icns ]; then \
 		cp $(ICON_NAME).icns $(RESOURCES_DIR)/; \
 	fi
@@ -69,9 +75,13 @@ install: app
 	@cp -r $(APP_DIR) ~/Applications/
 	@echo "🎉  Installed! You can now run $(APP_NAME) from Spotlight."
 
+# Dev convenience: run the dashboard server directly without building the bundle.
+run-dashboard:
+	go run ./cmd/dashboard
+
 clean:
 	@echo "🧹  Cleaning up..."
-	@rm -f $(BINARY_NAME) $(ICON_NAME).icns
+	@rm -f $(BINARY_NAME) $(DASHBOARD_BINARY) $(ICON_NAME).icns
 	@rm -rf $(APP_DIR) $(ICON_NAME).iconset
 
 uninstall:

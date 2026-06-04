@@ -58,6 +58,7 @@ func main() {
 	go func() {
 		<-sigChan
 		saveHistory()
+		killDashboard()
 		os.Exit(0)
 	}()
 
@@ -107,6 +108,7 @@ func onReady() {
 	mThisWeek.Disable()
 
 	systray.AddSeparator()
+	mDashboard := systray.AddMenuItem("📊 Open Dashboard", "Open the Kiromon Dashboard in your browser")
 	mQuit := systray.AddMenuItem("Quit", "앱 종료")
 	mRefresh := systray.AddMenuItem("🔄 Refresh", "")
 
@@ -175,7 +177,16 @@ func onReady() {
 	go func() {
 		<-mQuit.ClickedCh // Quit 버튼이 클릭될 때까지 대기
 		saveHistory()
+		killDashboard()
 		systray.Quit() // 앱 정상 종료
+	}()
+
+	// 4. 대시보드 열기 이벤트 리스너 (고루틴)
+	go func() {
+		for range mDashboard.ClickedCh {
+			// 별도 고루틴에서 실행: 스폰 대기 동안 클릭 채널 블로킹 방지
+			go openDashboard()
+		}
 	}()
 }
 

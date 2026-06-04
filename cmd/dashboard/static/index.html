@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiromon Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+    <h1>🤖 Kiromon Dashboard</h1>
+    <div class="controls">
+        <button id="refresh-btn" type="button">🔄 Refresh</button>
+        <span id="last-updated" class="muted"></span>
+    </div>
+</header>
+
+<main>
+    <!-- Today summary -->
+    <section class="card-row" aria-label="Today summary">
+        <article class="card">
+            <div class="card-label">Sessions</div>
+            <div class="card-value" id="today-sessions">—</div>
+        </article>
+        <article class="card">
+            <div class="card-label">Messages</div>
+            <div class="card-value" id="today-messages">—</div>
+        </article>
+        <article class="card">
+            <div class="card-label">Active Time</div>
+            <div class="card-value" id="today-active">—</div>
+        </article>
+        <article class="card">
+            <div class="card-label">This Week Messages</div>
+            <div class="card-value" id="week-messages">—</div>
+        </article>
+    </section>
+
+    <!-- Usage % progress -->
+    <section class="card-row" aria-label="Usage percentage">
+        <article class="card progress">
+            <div class="card-label">CLI Usage</div>
+            <div class="progress-bar"><div class="progress-fill" id="cli-fill"></div></div>
+            <div class="progress-text" id="cli-text">—</div>
+        </article>
+        <article class="card progress">
+            <div class="card-label">IDE Usage</div>
+            <div class="progress-bar"><div class="progress-fill" id="ide-fill"></div></div>
+            <div class="progress-text" id="ide-text">—</div>
+        </article>
+    </section>
+
+    <!-- Forecast -->
+    <section class="panel">
+        <h2>📅 Forecast</h2>
+        <div class="forecast-grid">
+            <div>
+                <div class="forecast-label">CLI days left</div>
+                <div class="forecast-value" id="cli-days">—</div>
+            </div>
+            <div>
+                <div class="forecast-label">IDE days left</div>
+                <div class="forecast-value" id="ide-days">—</div>
+            </div>
+            <div>
+                <div class="forecast-label">Calendar days left this month</div>
+                <div class="forecast-value" id="calendar-days">—</div>
+            </div>
+        </div>
+        <p class="hint" id="forecast-hint"></p>
+    </section>
+
+    <!-- Daily activity chart -->
+    <section class="panel">
+        <div class="panel-header">
+            <h2>📈 Daily Activity</h2>
+            <div class="range-toggle" role="tablist" aria-label="Date range">
+                <button data-days="30" class="active" type="button">30d</button>
+                <button data-days="90" type="button">90d</button>
+                <button data-days="365" type="button">365d</button>
+            </div>
+        </div>
+        <div class="chart-wrap">
+            <canvas id="activity-chart"></canvas>
+        </div>
+    </section>
+
+    <!-- Aggregates -->
+    <section class="panel">
+        <h2>📊 Aggregates</h2>
+        <div class="agg-grid">
+            <div class="agg-block">
+                <h3>This Week (7d)</h3>
+                <table class="agg-table" id="agg-week"></table>
+            </div>
+            <div class="agg-block">
+                <h3>This Month (30d)</h3>
+                <table class="agg-table" id="agg-month"></table>
+            </div>
+            <div class="agg-block">
+                <h3>This Year (365d)</h3>
+                <table class="agg-table" id="agg-year"></table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Top projects -->
+    <section class="panel">
+        <div class="panel-header">
+            <h2>📂 Top Projects</h2>
+            <div class="range-toggle" role="tablist" aria-label="Projects range">
+                <button data-pdays="30" class="active" type="button">30d</button>
+                <button data-pdays="90" type="button">90d</button>
+                <button data-pdays="365" type="button">365d</button>
+            </div>
+        </div>
+        <div class="chart-wrap small">
+            <canvas id="projects-chart"></canvas>
+        </div>
+        <table id="projects-table" class="projects-table"></table>
+    </section>
+</main>
+
+<footer class="footer muted">
+    <span>Kiromon Dashboard · localhost only</span>
+</footer>
+
+<script src="/static/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
